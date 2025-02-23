@@ -39,8 +39,8 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: iceberg
-      POSTGRES_PASSWORD: iceberg
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: iceberg
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -58,19 +58,19 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     entrypoint: >
       /bin/sh -c "
       mkdir -p /data/warehouse &&
       curl -s https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/bin/mc &&
       chmod +x /usr/bin/mc &&
       minio server --console-address ':9001' /data &
-      until (mc alias set myminio http://127.0.0.1:9000 minioadmin minioadmin) do echo 'Waiting for Minio to be ready...' && sleep 1; done &&
+      until (mc alias set myminio http://127.0.0.1:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}) do echo 'Waiting for Minio to be ready...' && sleep 1; done &&
       mc mb myminio/warehouse || true &&
       mc policy set public myminio/warehouse || true &&
-      mc admin user add myminio iceberg icebergpass &&
-      mc admin policy attach myminio readwrite --user iceberg || true &&
+      mc admin user add myminio ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} &&
+      mc admin policy attach myminio readwrite --user ${AWS_ACCESS_KEY_ID} || true &&
       wait"
     volumes:
       - minio_data:/data
@@ -109,8 +109,8 @@ services:
       CONNECT_LOG4J_ROOT_LOGLEVEL: "INFO"
       CONNECT_LOG4J_LOGGERS: "org.apache.iceberg=INFO,org.postgresql=DEBUG"
       CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
-      AWS_ACCESS_KEY_ID: iceberg
-      AWS_SECRET_ACCESS_KEY: icebergpass
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: eu-central-1
       AWS_ENDPOINT_URL: http://minio:9000
       AWS_S3_FORCE_PATH_STYLE: "true"
@@ -133,6 +133,10 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka1:29092
       KAFKA_TOPIC: iceberg-topic
       PYICEBERG_CATALOG_ICEBERG_URI: jdbc:postgresql://postgres:5432/iceberg
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from kafka import KafkaProducer; KafkaProducer(bootstrap_servers='kafka1:29092')\""]

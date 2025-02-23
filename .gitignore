@@ -67,3 +67,7 @@ tabular-iceberg-kafka-connect-0.6.19.zip
 *.db
 *.sqlite
 *.sqlite3
+
+# Environment files
+.env
+.env.*

@@ -34,6 +34,28 @@ def create_producer():
         retry_backoff_ms=1000  # Wait 1 second between retries
     )
 
+def substitute_env_vars(config):
+    """Replace environment variables in the configuration"""
+    if isinstance(config, dict):
+        return {k: substitute_env_vars(v) for k, v in config.items()}
+    elif isinstance(config, list):
+        return [substitute_env_vars(v) for v in config]
+    elif isinstance(config, str):
+        # Find all ${VAR} patterns and replace them with environment variables
+        import re
+        pattern = r'\$\{([^}]+)\}'
+        matches = re.finditer(pattern, config)
+        result = config
+        for match in matches:
+            env_var = match.group(1)
+            env_value = os.environ.get(env_var)
+            if env_value is None:
+                logger.warning(f"Environment variable {env_var} not found")
+                continue
+            result = result.replace(f"${{{env_var}}}", env_value)
+        return result
+    return config
+
 def register_connector():
     """Register the Iceberg sink connector with Kafka Connect"""
     connect_url = "http://kafka-connect:8083"
@@ -65,6 +87,8 @@ def register_connector():
 
     # Register connector
     try:
+        # Replace environment variables in the configuration
+        connector_config = substitute_env_vars(connector_config)
         connector_name = connector_config['name']
         logger.info("Registering connector: %s", connector_name)
 

@@ -8,6 +8,12 @@ Before running this project, you need to:
 
 1. Download `tabular-iceberg-kafka-connect-0.6.19.zip` separately and place it in the root folder of the project. This file is required for the Kafka Connect Iceberg sink connector.
 2. Have Docker and Docker Compose installed on your system.
+3. Set up your environment variables:
+   - Copy `.env.example` to `.env`
+   - Update the values in `.env` with your desired credentials:
+     - PostgreSQL credentials (POSTGRES_USER, POSTGRES_PASSWORD)
+     - MinIO root credentials (MINIO_ROOT_USER, MINIO_ROOT_PASSWORD)
+     - MinIO/AWS user credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
 
 ## Project Components
 
