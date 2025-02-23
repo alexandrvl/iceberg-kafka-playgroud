@@ -1,0 +1,28 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+COPY src/main/python/kafka_publisher.py .
+COPY connector-config.json .
+
+RUN pip install kafka-python requests "pyiceberg==0.5.0" psycopg2-binary && \
+    apt-get update && \
+    apt-get install -y netcat-openbsd && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Add a script to wait for Kafka
+COPY <<EOF /app/wait-for-kafka.sh
+#!/bin/bash
+echo "Waiting for Kafka to be ready..."
+until nc -z kafka1 29092; do
+  echo "Waiting for kafka1..."
+  sleep 2
+done
+echo "Kafka is ready! Starting publisher..."
+exec python kafka_publisher.py
+EOF
+
+RUN chmod +x /app/wait-for-kafka.sh
+
+CMD ["/app/wait-for-kafka.sh"]

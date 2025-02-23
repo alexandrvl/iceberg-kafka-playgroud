@@ -1,0 +1,77 @@
+# Stage 1: Build stage with necessary tools
+FROM alpine:3.18 AS builder
+
+# Install necessary tools
+RUN apk add --no-cache \
+    unzip \
+    curl \
+    bash \
+    findutils
+
+# Create working directory
+WORKDIR /build
+
+# Download PostgreSQL JDBC Driver
+RUN curl -L https://jdbc.postgresql.org/download/postgresql-42.7.1.jar -o postgresql-42.7.1.jar
+
+# Download Apache Commons Configuration2 and its dependencies
+RUN curl -L https://repo1.maven.org/maven2/org/apache/commons/commons-configuration2/2.9.0/commons-configuration2-2.9.0.jar -o commons-configuration2-2.9.0.jar && \
+    curl -L https://repo1.maven.org/maven2/org/apache/commons/commons-lang3/3.12.0/commons-lang3-3.12.0.jar -o commons-lang3-3.12.0.jar
+
+# Copy and extract the connector
+COPY tabular-iceberg-kafka-connect-0.6.19.zip /build/
+
+# Verify and extract the connector
+RUN set -ex && \
+    echo "Verifying ZIP file..." && \
+    if [ ! -f "/build/tabular-iceberg-kafka-connect-0.6.19.zip" ]; then \
+        echo "ERROR: Connector ZIP file not found" && exit 1; \
+    fi && \
+    unzip -t /build/tabular-iceberg-kafka-connect-0.6.19.zip || { echo "ZIP file integrity check failed"; exit 1; } && \
+    echo "Creating plugins directory..." && \
+    mkdir -p /build/plugins && \
+    echo "Extracting connector..." && \
+    unzip -o /build/tabular-iceberg-kafka-connect-0.6.19.zip -d /build/plugins/ && \
+    echo "Removing __MACOSX files..." && \
+    rm -rf /build/plugins/__MACOSX && \
+    echo "Verifying extraction..." && \
+    if ! find /build/plugins -name "*.jar" | grep -q .; then \
+        echo "ERROR: No JAR files found after extraction" && exit 1; \
+    fi && \
+    if ! find /build/plugins -name "manifest.json" | grep -q .; then \
+        echo "ERROR: manifest.json not found after extraction" && exit 1; \
+    fi && \
+    echo "Cleaning up..." && \
+    rm /build/tabular-iceberg-kafka-connect-0.6.19.zip && \
+    echo "Connector contents:" && \
+    ls -R /build/plugins/
+
+# Stage 2: Final stage
+FROM confluentinc/cp-kafka-connect:7.3.0
+
+# Switch to root to configure
+USER root
+
+# Create plugin directory as recommended by Confluent
+RUN mkdir -p /usr/local/share/kafka/plugins
+
+# Copy the extracted connector from builder stage
+COPY --from=builder /build/plugins/ /usr/local/share/kafka/plugins/
+
+# Copy PostgreSQL JDBC driver and Commons dependencies
+COPY --from=builder /build/postgresql-42.7.1.jar /usr/local/share/kafka/plugins/
+COPY --from=builder /build/postgresql-42.7.1.jar /usr/share/java/kafka/
+COPY --from=builder /build/commons-configuration2-2.9.0.jar /usr/local/share/kafka/plugins/
+COPY --from=builder /build/commons-configuration2-2.9.0.jar /usr/share/java/kafka/
+COPY --from=builder /build/commons-lang3-3.12.0.jar /usr/local/share/kafka/plugins/
+COPY --from=builder /build/commons-lang3-3.12.0.jar /usr/share/java/kafka/
+
+# Set proper permissions
+RUN chown -R appuser:appuser /usr/local/share/kafka/plugins && \
+    chmod -R 755 /usr/local/share/kafka/plugins
+
+# Switch back to the default user
+USER appuser
+
+# Use the default Confluent entrypoint
+ENTRYPOINT ["/etc/confluent/docker/run"]
