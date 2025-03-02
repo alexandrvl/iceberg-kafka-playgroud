@@ -5,7 +5,7 @@ WORKDIR /app
 COPY src/main/python/kafka_publisher.py .
 COPY connector-config.json .
 
-RUN pip install kafka-python requests "pyiceberg==0.5.0" psycopg2-binary && \
+RUN pip install kafka-python requests "pyiceberg==0.5.0" psycopg2-binary "confluent-kafka[avro]==2.1.1" && \
     apt-get update && \
     apt-get install -y netcat-openbsd && \
     apt-get clean && \

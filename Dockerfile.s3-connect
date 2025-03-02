@@ -1,0 +1,78 @@
+# Stage 1: Build stage with necessary tools
+FROM alpine:3.18 AS builder
+
+# Install necessary tools
+RUN apk add --no-cache \
+    unzip \
+    curl \
+    bash \
+    findutils
+
+# Create working directory
+WORKDIR /build
+
+# Set versions
+ENV KAFKA_CONNECT_S3_VERSION=10.5.23
+ENV SCHEMA_REGISTRY_VERSION=7.3.0
+
+# Download and copy connectors
+COPY confluentinc-kafka-connect-s3-${KAFKA_CONNECT_S3_VERSION}.zip /build/
+
+# Download Schema Registry converter
+RUN curl -SL "https://packages.confluent.io/maven/io/confluent/kafka-connect-json-schema-converter/${SCHEMA_REGISTRY_VERSION}/kafka-connect-json-schema-converter-${SCHEMA_REGISTRY_VERSION}.jar" \
+    -o /build/kafka-connect-json-schema-converter.jar
+
+# Verify and extract the connector
+RUN set -ex && \
+    echo "Creating plugins directory..." && \
+    mkdir -p /build/plugins && \
+    # Process S3 connector
+    echo "Verifying S3 connector ZIP file..." && \
+    if [ ! -f "/build/confluentinc-kafka-connect-s3-10.5.23.zip" ]; then \
+        echo "ERROR: S3 connector ZIP file not found" && exit 1; \
+    fi && \
+    unzip -t /build/confluentinc-kafka-connect-s3-10.5.23.zip || { echo "S3 ZIP file integrity check failed"; exit 1; } && \
+    echo "Extracting S3 connector..." && \
+    unzip -o /build/confluentinc-kafka-connect-s3-${KAFKA_CONNECT_S3_VERSION}.zip -d /build/plugins/ && \
+    # Copy Schema Registry converter
+    echo "Copying Schema Registry converter..." && \
+    cp /build/kafka-connect-json-schema-converter.jar /build/plugins/ && \
+    # Clean up
+    echo "Removing __MACOSX files..." && \
+    rm -rf /build/plugins/__MACOSX && \
+    echo "Verifying extraction..." && \
+    if ! find /build/plugins -name "*.jar" | grep -q .; then \
+        echo "ERROR: No JAR files found after extraction" && exit 1; \
+    fi && \
+    if [ ! -f "/build/plugins/kafka-connect-json-schema-converter.jar" ]; then \
+        echo "ERROR: Schema Registry converter not found" && exit 1; \
+    fi && \
+    if ! find /build/plugins -name "manifest.json" | grep -q .; then \
+        echo "ERROR: manifest.json not found after extraction" && exit 1; \
+    fi && \
+    echo "Cleaning up..." && \
+    rm /build/confluentinc-kafka-connect-s3-10.5.23.zip && \
+    echo "Connector contents:" && \
+    ls -R /build/plugins/
+
+# Stage 2: Final stage
+FROM confluentinc/cp-kafka-connect:7.3.0
+
+# Switch to root to configure
+USER root
+
+# Create plugin directory as recommended by Confluent
+RUN mkdir -p /usr/local/share/kafka/plugins
+
+# Copy the extracted connector from builder stage
+COPY --from=builder /build/plugins/ /usr/local/share/kafka/plugins/
+
+# Set proper permissions
+RUN chown -R appuser:appuser /usr/local/share/kafka/plugins && \
+    chmod -R 755 /usr/local/share/kafka/plugins
+
+# Switch back to the default user
+USER appuser
+
+# Use the default Confluent entrypoint
+ENTRYPOINT ["/etc/confluent/docker/run"]

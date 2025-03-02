@@ -10,6 +10,23 @@ services:
     ports:
       - "2181:2181"
 
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.3.0
+    container_name: schema-registry
+    depends_on:
+      - kafka1
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka1:29092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   kafka1:
     image: confluentinc/cp-kafka:7.3.0
     container_name: kafka1
@@ -65,15 +82,28 @@ services:
       mkdir -p /data/warehouse &&
       curl -s https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/bin/mc &&
       chmod +x /usr/bin/mc &&
+      sleep 1 &&
       minio server --console-address ':9001' /data &
-      until (mc alias set myminio http://127.0.0.1:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}) do echo 'Waiting for Minio to be ready...' && sleep 1; done &&
+      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}
       mc mb myminio/warehouse || true &&
+      mc mb myminio/s3-sink || true &&
       mc policy set public myminio/warehouse || true &&
-      mc admin user add myminio ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} &&
+      mc policy set public myminio/s3-sink || true &&
+      mc admin user add myminio ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} || true &&
       mc admin policy attach myminio readwrite --user ${AWS_ACCESS_KEY_ID} || true &&
       wait"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "sleep 3 && \
+             (curl -f http://localhost:9000/minio/health/ready || echo 'MinIO API not ready' >&2) && \
+             (mc alias list myminio > /dev/null || echo 'MinIO client not configured' >&2) && \
+             (mc ls myminio/warehouse > /dev/null || echo 'warehouse bucket not accessible' >&2) && \
+             (mc ls myminio/s3-sink > /dev/null || echo 's3-sink bucket not accessible' >&2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 100
+      start_period: 10s
 
   kafka-connect:
     build:
@@ -86,7 +116,7 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8083:8083"
     environment:
@@ -101,9 +131,10 @@ services:
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_MIN_INSYNC_REPLICAS: 1
       CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
-      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
-      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
-      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
       CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
       CONNECT_PLUGIN_PATH: "/usr/local/share/kafka/plugins"
       CONNECT_LOG4J_ROOT_LOGLEVEL: "INFO"
@@ -132,6 +163,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka1:29092
       KAFKA_TOPIC: iceberg-topic
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
       PYICEBERG_CATALOG_ICEBERG_URI: jdbc:postgresql://postgres:5432/iceberg
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -143,6 +175,68 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  s3-kafka-connect:
+    build:
+      context: .
+      dockerfile: Dockerfile.s3-connect
+    container_name: s3-kafka-connect
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "8084:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka1:29092
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: "s3-kafka-connect"
+      CONNECT_CONFIG_STORAGE_TOPIC: "s3-connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "s3-connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "s3-connect-status"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_MIN_INSYNC_REPLICAS: 1
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+      CONNECT_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "true"
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_INTERNAL_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_INTERNAL_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "s3-kafka-connect"
+      CONNECT_PLUGIN_PATH: "/usr/local/share/kafka/plugins"
+      CONNECT_LOG4J_ROOT_LOGLEVEL: "INFO"
+      CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_ENDPOINT_URL: http://minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "true"
+      AWS_S3_PATH_STYLE_ACCESS: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connector-plugins"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  s3-deployer:
+    build:
+      context: .
+      dockerfile: Dockerfile.s3-deployer
+    container_name: s3-deployer
+    depends_on:
+      s3-kafka-connect:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: eu-central-1
+      AWS_ENDPOINT_URL: http://minio:9000
 
 volumes:
   postgres_data:

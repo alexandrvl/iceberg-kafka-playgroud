@@ -1,0 +1,12 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir requests==2.31.0
+
+# Copy the Python script and connector config
+COPY src/main/python/s3_connector_deployer.py .
+COPY s3-connector-config.json .
+
+CMD ["python", "s3_connector_deployer.py"]
