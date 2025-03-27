@@ -238,6 +238,32 @@ services:
       AWS_REGION: eu-central-1
       AWS_ENDPOINT_URL: http://minio:9000
 
+  duckdb-rest:
+    build:
+      context: .
+      dockerfile: Dockerfile.duckdb
+    container_name: duckdb-rest
+    depends_on:
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8888:8888"
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: eu-central-1
+      AWS_ENDPOINT_URL: http://minio:9000
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8888/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   postgres_data:
   minio_data:

@@ -72,6 +72,9 @@ The playground consists of the following integrated services:
   - Stores Iceberg data files
   - Handles S3 sink data
   - Provides S3 API compatibility
+- **DuckDB REST API**: Analytical query engine
+  - Queries Parquet files from S3 sink
+  - Provides REST API for data analysis
 
 ### Connector Services
 - **Kafka Connect (Iceberg)**: Primary connector service
@@ -114,10 +117,10 @@ The playground consists of the following integrated services:
 1. Start the infrastructure:
    ```bash
    # Build and start all services
-   docker-compose up -d --build
+   docker compose up -d --build
 
    # Monitor service health
-   docker-compose ps
+   docker compose ps
    ```
 
 2. Verify service availability:
@@ -135,8 +138,8 @@ curl http://localhost:8083/connectors/iceberg-sink/status
 curl http://localhost:8084/connectors/s3-sink/status
 
 # View deployment logs
-docker-compose logs -f s3-deployer
-docker-compose logs -f kafka-publisher
+docker compose logs -f s3-deployer
+docker compose logs -f kafka-publisher
 ```
 
 ## Configuration
@@ -189,13 +192,55 @@ Key Features:
 - **Credentials**: Automatic environment variable substitution
 - **Full Config**: See [s3-connector-config.json](s3-connector-config.json)
 
+### DuckDB S3 Configuration
+
+The DuckDB service uses a secure method for storing AWS credentials using the CREATE SECRET command:
+
+#### Using CREATE SECRET for AWS Credentials
+
+Instead of directly setting the AWS credentials using the `s3_access_key_id` and `s3_secret_access_key` parameters, we create a secret using the CREATE SECRET command and reference it using the `s3_secret_name` parameter:
+
+```python
+# Create a secret for AWS credentials
+conn.execute(f"""
+CREATE SECRET IF NOT EXISTS aws_credentials TYPE aws AS (
+    'aws_access_key_id' = '{aws_access_key_id}',
+    'aws_secret_access_key' = '{aws_secret_access_key}'
+)
+""")
+
+# Use the secret for S3 configuration
+conn.execute("SET s3_secret_name = 'aws_credentials'")
+```
+
+This approach is more secure because:
+- It prevents the credentials from being exposed in query logs or error messages
+- It provides a centralized way to manage credentials
+- It follows security best practices for handling sensitive information
+
+#### Handling S3 Endpoint URL
+
+The S3 endpoint URL is processed to ensure compatibility with DuckDB's httpfs extension:
+
+```python
+# Remove the protocol (http:// or https://) from the endpoint URL
+# This is to fix an issue with DuckDB's httpfs extension
+endpoint_for_s3 = aws_endpoint_url
+if aws_endpoint_url and (aws_endpoint_url.startswith("http://") or aws_endpoint_url.startswith("https://")):
+    # Extract the host and port part without the protocol
+    endpoint_for_s3 = aws_endpoint_url.split("://")[1]
+conn.execute(f"SET s3_endpoint='{endpoint_for_s3}'")
+```
+
+This ensures that DuckDB's httpfs extension won't strip the protocol incorrectly, which was causing connection errors.
+
 ## Monitoring and Maintenance
 
 ### Health Monitoring
 1. Check service status:
    ```bash
-   docker-compose ps
-   docker-compose logs -f <service-name>
+   docker compose ps
+   docker compose logs -f <service-name>
    ```
 
 2. Verify connector health:
@@ -211,6 +256,66 @@ Key Features:
    - Schema Registry: http://localhost:8081
      - Schema versions
      - Compatibility status
+   - DuckDB REST API: http://localhost:8888
+     - REST endpoints for data queries
+     - Health check at /health
+
+### Using DuckDB REST API for Data Analysis
+
+The DuckDB REST API service provides a powerful interface for analyzing data stored in both Parquet and Iceberg formats in MinIO S3.
+
+#### Accessing DuckDB REST API
+
+The REST API is available at http://localhost:8888 and provides the following endpoints:
+
+1. **Health Check**:
+   ```bash
+   curl http://localhost:8888/health
+   ```
+   Returns the health status of the DuckDB REST API service.
+
+2. **Execute Custom SQL Query**:
+   ```bash
+   curl -X POST -H "Content-Type: application/json" \
+     -d '{"query": "SELECT * FROM read_parquet(\"s3://s3-sink/topics/iceberg-topic/partition=0/*.parquet\") LIMIT 5"}' \
+     http://localhost:8888/query
+   ```
+   Executes a custom SQL query and returns the results as JSON.
+
+3. **List Parquet Files**:
+   ```bash
+   curl "http://localhost:8888/list_parquet?path=s3://s3-sink/topics/iceberg-topic/partition=*/*.parquet"
+   ```
+   Lists Parquet files in the specified S3 path.
+
+4. **Query Parquet Data**:
+   ```bash
+   curl "http://localhost:8888/query_parquet?path=s3://s3-sink/topics/iceberg-topic/partition=0/*.parquet&limit=5"
+   ```
+   Queries Parquet data from the specified S3 path and returns the results as JSON.
+
+#### Example Queries
+
+1. **Query Parquet files from S3 sink**:
+   ```bash
+   # List available Parquet files
+   curl "http://localhost:8888/list_parquet"
+
+   # Query Parquet data
+   curl "http://localhost:8888/query_parquet"
+   ```
+
+2. **Execute a custom SQL query**:
+   ```bash
+   # Query data with custom SQL
+   curl -X POST -H "Content-Type: application/json" \
+     -d '{
+       "query": "SELECT * FROM read_parquet(\"s3://s3-sink/topics/iceberg-topic/partition=0/*.parquet\") LIMIT 10"
+     }' \
+     http://localhost:8888/query
+   ```
+
+Note: The actual paths may vary based on your data. Use the `/list_parquet` endpoint to discover the available Parquet files in your environment.
 
 ### Common Operations
 1. Restart a connector:
@@ -226,6 +331,36 @@ Key Features:
        localhost:8083/connectors/iceberg-sink/config
    ```
 
+### Rebuilding and Validating DuckDB Service
+
+If you need to rebuild the DuckDB service after making changes:
+
+1. Rebuild the DuckDB service:
+   ```bash
+   # Rebuild the DuckDB service
+   docker compose build duckdb
+
+   # Start the DuckDB service
+   docker compose up -d duckdb
+   ```
+
+2. Validate DuckDB with Parquet:
+   ```bash
+   # Run the test script to validate functionality
+   docker exec -it duckdb python /app/notebooks/test_duckdb.py
+   ```
+
+3. Check logs for errors:
+   ```bash
+   # View the DuckDB service logs
+   docker compose logs duckdb
+   ```
+
+4. Expected results:
+   - Successful connection to DuckDB
+   - Successful loading of extensions (httpfs, parquet)
+   - Successful listing and querying of Parquet files
+
 ## Troubleshooting
 
 ### Common Issues
@@ -235,7 +370,7 @@ Key Features:
    - **Solution**: 
      ```bash
      # Check detailed error message
-     docker-compose logs kafka-connect
+     docker compose logs kafka-connect
      # Verify Schema Registry is accessible
      curl localhost:8081
      ```
@@ -245,7 +380,7 @@ Key Features:
    - **Solution**:
      ```bash
      # Check Schema Registry logs
-     docker-compose logs schema-registry
+     docker compose logs schema-registry
      # Verify schema compatibility
      curl localhost:8081/subjects/iceberg-topic-value/versions
      ```
@@ -270,7 +405,37 @@ Key Features:
      - This occurs due to a race condition when executing the MinIO client (mc) right after installation
      - Add a small delay (1-2 seconds) after chmod and before executing mc
      - Ensure proper error handling for mc commands
-     - Check MinIO container logs: `docker-compose logs minio`
+     - Check MinIO container logs: `docker compose logs minio`
+
+6. **DuckDB REST API Connection Issues**
+   - **Symptom**: Unable to query S3 data from DuckDB REST API
+   - **Solution**:
+     - Verify S3 credentials in environment variables
+     - Check MinIO is accessible: `curl -I http://minio:9000`
+     - Check if the REST API is running: `curl http://localhost:8888/health`
+     - Check DuckDB REST API logs: `docker compose logs duckdb-rest`
+     - Verify the S3 path format is correct (should be `s3://bucket-name/path`)
+     - Test a simple query: `curl -X POST -H "Content-Type: application/json" -d '{"query":"SELECT 1"}' http://localhost:8888/query`
+
+
+7. **DuckDB S3 Connection Error**
+   - **Symptom**: Error message: `IO Error: Connection error for HTTP GET to '//minio:9000/s3-sink/?encoding-type=url&list-type=2&prefix=topics%2Ficeberg-topic%2Fpartition%3D'`
+   - **Root Cause**: DuckDB's httpfs extension strips the "http:" part from the endpoint URL, resulting in an invalid URL format.
+   - **Solution**:
+     - Remove the protocol (http:// or https://) from the endpoint URL before setting it using the `s3_endpoint` parameter:
+       ```python
+       # Remove the protocol (http:// or https://) from the endpoint URL
+       if aws_endpoint_url and (aws_endpoint_url.startswith("http://") or aws_endpoint_url.startswith("https://")):
+           # Extract the host and port part without the protocol
+           aws_endpoint_url = aws_endpoint_url.split("://")[1]
+       conn.execute(f"SET s3_endpoint='{aws_endpoint_url}'")
+       ```
+     - This ensures that DuckDB's httpfs extension won't strip the protocol incorrectly, which was causing the connection error.
+     - Files that were modified to fix this issue:
+       - `src/main/python/init_duckdb.py`
+       - `notebooks/test_duckdb.py`
+       - `notebooks/query_examples.py`
+       - `notebooks/test_duckdb_notebook.ipynb`
 
 ## License
 

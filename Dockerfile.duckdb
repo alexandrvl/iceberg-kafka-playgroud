@@ -1,0 +1,40 @@
+# Use a single-stage build for simplicity
+FROM python:3.10-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    duckdb==1.2.1 \
+    pandas \
+    pyarrow \
+    boto3 \
+    flask \
+    s3fs
+
+# Install DuckDB extensions
+RUN mkdir -p /root/.duckdb/extensions
+
+# Copy application files
+COPY src/main/python/duckdb_rest_server.py /app/duckdb_rest_server.py
+COPY src/main/scripts/start.sh /app/start.sh
+
+# Make scripts executable
+RUN chmod +x /app/duckdb_rest_server.py /app/start.sh
+
+# Expose port for REST API
+EXPOSE 8888
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Set the entrypoint
+ENTRYPOINT ["/bin/bash", "/app/start.sh"]
