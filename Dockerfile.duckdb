@@ -25,10 +25,10 @@ RUN mkdir -p /root/.duckdb/extensions
 
 # Copy application files
 COPY src/main/python/duckdb_rest_server.py /app/duckdb_rest_server.py
-COPY src/main/scripts/start.sh /app/start.sh
+COPY src/main/scripts/duckdb_start.sh /app/duckdb_start.sh
 
 # Make scripts executable
-RUN chmod +x /app/duckdb_rest_server.py /app/start.sh
+RUN chmod +x /app/duckdb_rest_server.py /app/duckdb_start.sh
 
 # Expose port for REST API
 EXPOSE 8888
@@ -37,4 +37,4 @@ EXPOSE 8888
 ENV PYTHONUNBUFFERED=1
 
 # Set the entrypoint
-ENTRYPOINT ["/bin/bash", "/app/start.sh"]
+ENTRYPOINT ["/bin/bash", "/app/duckdb_start.sh"]

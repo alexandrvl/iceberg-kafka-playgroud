@@ -75,6 +75,9 @@ The playground consists of the following integrated services:
 - **DuckDB REST API**: Analytical query engine
   - Queries Parquet files from S3 sink
   - Provides REST API for data analysis
+- **PyIceberg REST API**: Iceberg-specific query engine
+  - Queries Iceberg tables using PyIceberg
+  - Provides REST API for Iceberg table operations
 
 ### Connector Services
 - **Kafka Connect (Iceberg)**: Primary connector service
@@ -129,6 +132,8 @@ The playground consists of the following integrated services:
    - Kafka Connect (S3): http://localhost:8084
    - MinIO Console: http://localhost:9001
    - PostgreSQL: localhost:5432
+   - DuckDB REST API: http://localhost:8888
+   - PyIceberg REST API: http://localhost:8889
 
 ### Health Check
 Monitor deployment status:
@@ -259,6 +264,9 @@ This ensures that DuckDB's httpfs extension won't strip the protocol incorrectly
    - DuckDB REST API: http://localhost:8888
      - REST endpoints for data queries
      - Health check at /health
+   - PyIceberg REST API: http://localhost:8889
+     - REST endpoints for Iceberg table operations
+     - Health check at /health
 
 ### Using DuckDB REST API for Data Analysis
 
@@ -316,6 +324,79 @@ The REST API is available at http://localhost:8888 and provides the following en
    ```
 
 Note: The actual paths may vary based on your data. Use the `/list_parquet` endpoint to discover the available Parquet files in your environment.
+
+### Using PyIceberg REST API for Iceberg Table Operations
+
+The PyIceberg REST API service provides a specialized interface for working with Apache Iceberg tables using the PyIceberg Python library (version 0.9.0).
+
+#### Accessing PyIceberg REST API
+
+The REST API is available at http://localhost:8889 and provides the following endpoints:
+
+1. **Health Check**:
+   ```bash
+   curl http://localhost:8889/health
+   ```
+   Returns the health status of the PyIceberg REST API service.
+
+2. **List Namespaces**:
+   ```bash
+   curl http://localhost:8889/namespaces
+   ```
+   Lists all namespaces (databases) in the Iceberg catalog.
+
+3. **List Tables**:
+   ```bash
+   curl "http://localhost:8889/tables?namespace=default_db"
+   ```
+   Lists all tables in the specified namespace (defaults to 'default_db').
+
+4. **Get Table Information**:
+   ```bash
+   curl "http://localhost:8889/table?namespace=default_db&table=purchase_events"
+   ```
+   Returns detailed information about the specified table, including schema and metadata.
+
+5. **Query Table Data**:
+   ```bash
+   curl -X POST -H "Content-Type: application/json" \
+     -d '{
+       "namespace": "default_db",
+       "table": "purchase_events",
+       "limit": 10
+     }' \
+     http://localhost:8889/query
+   ```
+   Queries data from the specified Iceberg table and returns the results as JSON.
+
+#### Example Queries
+
+1. **List all namespaces**:
+   ```bash
+   curl http://localhost:8889/namespaces
+   ```
+
+2. **List tables in the default namespace**:
+   ```bash
+   curl http://localhost:8889/tables
+   ```
+
+3. **Get table schema and metadata**:
+   ```bash
+   curl "http://localhost:8889/table?table=purchase_events"
+   ```
+
+4. **Query table data with limit**:
+   ```bash
+   curl -X POST -H "Content-Type: application/json" \
+     -d '{
+       "table": "purchase_events",
+       "limit": 5
+     }' \
+     http://localhost:8889/query
+   ```
+
+Note: The PyIceberg REST API uses the configuration from connector-config.json to connect to the Iceberg catalog using Apache Iceberg SQL catalog based on PostgreSQL, ensuring consistency with the Iceberg sink connector.
 
 ### Common Operations
 1. Restart a connector:
@@ -436,6 +517,25 @@ If you need to rebuild the DuckDB service after making changes:
        - `notebooks/test_duckdb.py`
        - `notebooks/query_examples.py`
        - `notebooks/test_duckdb_notebook.ipynb`
+
+8. **PyIceberg REST API Connection Issues**
+   - **Symptom**: Unable to query Iceberg tables from PyIceberg REST API
+   - **Solution**:
+     - Verify PostgreSQL credentials in environment variables
+     - Check if the REST API is running: `curl http://localhost:8889/health`
+     - Check PyIceberg REST API logs: `docker compose logs pyiceberg-rest`
+     - Verify the connector-config.json file is correctly mounted in the container
+     - Test a simple query: `curl http://localhost:8889/namespaces`
+
+9. **PyIceberg Catalog Configuration Issues**
+   - **Symptom**: Error message: `Error initializing PyIceberg catalog`
+   - **Root Cause**: Incorrect SQL catalog configuration or missing environment variables
+   - **Solution**:
+     - Verify the catalog configuration in connector-config.json
+     - Check that all required environment variables are set
+     - Ensure PostgreSQL is accessible from the PyIceberg container
+     - Verify that the SQL catalog is properly configured with the PostgreSQL connection details
+     - Check that the PyIceberg version is 0.9.0: `docker exec -it pyiceberg-rest pip freeze | grep pyiceberg`
 
 ## License
 

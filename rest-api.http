@@ -1,0 +1,71 @@
+# PyIceberg REST API Examples
+# This file contains examples of how to use the PyIceberg REST API
+# To run these examples, select an environment from the dropdown in the top right corner of the editor
+# Available environments: local, docker
+
+### Health Check
+# @name healthCheck
+# Checks if the PyIceberg REST server is running
+GET http://{{host}}:{{port}}/health
+
+### List Namespaces
+# @name listNamespaces
+# Lists all namespaces in the catalog
+GET http://{{host}}:{{port}}/namespaces
+
+### List Tables in Namespace
+# @name listTables
+# Lists all tables in the specified namespace
+GET http://{{host}}:{{port}}/tables?namespace=default_db
+
+### Get Table Information
+# @name getTableInfo
+# Gets information about the specified table, including schema and metadata
+GET http://{{host}}:{{port}}/table?namespace=default_db&table=purchase_events
+
+### Query Iceberg Table - Basic
+# @name queryTableBasic
+# Queries data from the specified table with a limit of 10 records
+POST http://{{host}}:{{port}}/query
+Content-Type: application/json
+
+{
+  "namespace": "default_db",
+  "table": "purchase_events",
+  "limit": 10
+}
+
+### Query Iceberg Table - Custom Limit
+# @name queryTableCustomLimit
+# Queries data from the specified table with a custom limit
+POST http://{{host}}:{{port}}/query
+Content-Type: application/json
+
+{
+  "namespace": "default_db",
+  "table": "purchase_events",
+  "limit": 5
+}
+
+### Query Iceberg Table - Different Table
+# @name queryTableDifferentTable
+# Queries data from a different table
+POST http://{{host}}:{{port}}/query
+Content-Type: application/json
+
+{
+  "namespace": "default_db",
+  "table": "another_table",
+  "limit": 10
+}
+
+### Query Iceberg Table - No Limit
+# @name queryTableNoLimit
+# Queries data from the specified table without a limit (uses default limit of 100)
+POST http://{{host}}:{{port}}/query
+Content-Type: application/json
+
+{
+  "namespace": "default_db",
+  "table": "purchase_events"
+}
